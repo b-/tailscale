@@ -23,7 +23,7 @@ import (
 	"tailscale.com/util/mak"
 )
 
-// A ConsensusIPPool is an IPSet from which individual IPV4 addresses can be checked out.
+// ConsensusIPPool is an IPSet from which individual IPV4 addresses can be checked out.
 //
 // The pool is distributed across servers in a cluster, to provide high availability.
 //
