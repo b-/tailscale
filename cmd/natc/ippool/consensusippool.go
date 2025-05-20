@@ -23,19 +23,11 @@ import (
 	"tailscale.com/util/mak"
 )
 
-// ConsensusIPPool is an IPSet from which individual IPV4 addresses can be checked out.
-//
-// The pool is distributed across servers in a cluster, to provide high availability.
-//
-// Each tailcfg.NodeID has the full range available. The same IPV4 address will be provided to different nodes.
-//
-// ConsensusIPPool will maintain the node-ip-domain mapping until it expires, and won't hand out the IP address to that node
-// again while it maintains the mapping.
-//
-// Reading from the pool is fast, writing to the pool is slow. Because reads can be done in memory on the server that got
-// the traffic, but writes must be sent to the consensus peers.
-//
-// To handle expiry we write on reads, to update the last-used-date, but we do that after we've returned a response.
+// ConsensusIPPool implements an [IPPool] that is distributed among members of a cluster for high availability.
+// Writes are directed to a leader among the cluster and are slower than reads, reads are performed locally
+// using information replicated from the leader.
+// The cluster maintains consistency, reads can be stale and writes can be unavailable if sufficient cluster
+// peers are unavailable.
 type ConsensusIPPool struct {
 	IPSet      *netipx.IPSet
 	perPeerMap *syncs.Map[tailcfg.NodeID, *consensusPerPeerState]
@@ -114,9 +106,9 @@ type whereWhen struct {
 }
 
 type consensusPerPeerState struct {
+	mu           sync.Mutex
 	domainToAddr map[string]netip.Addr
 	addrToDomain *bart.Table[whereWhen]
-	mu           sync.Mutex
 }
 
 // StopConsensus is part of the IPPool interface. It stops the raft background routines that handle consensus.
