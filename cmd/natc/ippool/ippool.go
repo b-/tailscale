@@ -25,8 +25,6 @@ import (
 var ErrNoIPsAvailable = errors.New("no IPs available")
 
 type IPPool interface {
-	StartConsensus(context.Context, *tsnet.Server, string) error
-	StopConsensus(context.Context) error
 	DomainForIP(tailcfg.NodeID, netip.Addr, time.Time) (string, bool)
 	IPForDomain(tailcfg.NodeID, string) (netip.Addr, error)
 }

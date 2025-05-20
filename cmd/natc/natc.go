@@ -155,12 +155,12 @@ func main() {
 	var ipp ippool.IPPool
 	if *clusterTag != "" {
 		ipp = ippool.NewConsensusIPPool(addrPool)
-		err = ipp.StartConsensus(ctx, ts, *clusterTag)
+		err = (ipp.(*ippool.ConsensusIPPool)).StartConsensus(ctx, ts, *clusterTag)
 		if err != nil {
 			log.Fatalf("StartConsensus: %v", err)
 		}
 		defer func() {
-			err := ipp.StopConsensus(ctx)
+			err := (ipp.(*ippool.ConsensusIPPool)).StopConsensus(ctx)
 			if err != nil {
 				log.Printf("Error stopping consensus: %v", err)
 			}
