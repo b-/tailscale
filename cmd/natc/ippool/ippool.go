@@ -22,6 +22,9 @@ import (
 
 var ErrNoIPsAvailable = errors.New("no IPs available")
 
+// IPPool allocates IPv4 addresses from a pool to DNS domains, on a per tailcfg.NodeID basis.
+// For each tailcfg.NodeID, IPv4 addresses are associated with at most one DNS domain.
+// Addresses may be reused across other tailcfg.NodeID's for the same or other domains.
 type IPPool interface {
 	DomainForIP(tailcfg.NodeID, netip.Addr, time.Time) (string, bool)
 	IPForDomain(tailcfg.NodeID, string) (netip.Addr, error)
