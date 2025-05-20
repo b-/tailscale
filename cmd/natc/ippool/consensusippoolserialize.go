@@ -95,18 +95,9 @@ type fsmSnapshot struct {
 // Persist is part of the raft.FSMSnapshot interface
 // According to the docs Persist may be called concurrently with Apply
 func (f fsmSnapshot) Persist(sink raft.SnapshotSink) error {
-	b, err := json.Marshal(f)
-	if err != nil {
-		if marshalErr := sink.Cancel(); marshalErr != nil {
-			log.Printf("Error in sink.Cancel while handling error from json.Marshal: %v", err)
-		}
-		return err
-	}
-	if _, err := sink.Write(b); err != nil {
-		if cancelErr := sink.Cancel(); cancelErr != nil {
-			log.Printf("Error in sink.Cancel while handling error from sink.Write: %v", err)
-		}
-		return err
+	if err := json.NewEncoder(sink).Encode(f); err != nil {
+		log.Printf("Error encoding snapshot as JSON: %v", err)
+		return sink.Cancel()
 	}
 	return sink.Close()
 }
