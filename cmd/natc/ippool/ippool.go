@@ -26,7 +26,13 @@ var ErrNoIPsAvailable = errors.New("no IPs available")
 // For each tailcfg.NodeID, IPv4 addresses are associated with at most one DNS domain.
 // Addresses may be reused across other tailcfg.NodeID's for the same or other domains.
 type IPPool interface {
+	// DomainForIP looks up the domain associated with a tailcfg.NodeID and netip.Addr pair.
+	// If there is no association, the result is empty and ok is false.
 	DomainForIP(tailcfg.NodeID, netip.Addr, time.Time) (string, bool)
+
+	// IPForDomain looks up or creates an IP address allocation for the tailcfg.NodeID and domain pair.
+	// If no address association is found, one is allocated from the range of free addresses for this tailcfg.NodeID.
+	// If no more address are available, an error is returned.
 	IPForDomain(tailcfg.NodeID, string) (netip.Addr, error)
 }
 
