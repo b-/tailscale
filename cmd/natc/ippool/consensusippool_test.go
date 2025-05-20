@@ -281,11 +281,7 @@ func TestConsensusSnapshot(t *testing.T) {
 	if len(ps.AddrToDomain) != 1 {
 		t.Fatalf("expected 1, got %d", len(ps.AddrToDomain))
 	}
-	addrPfx, err := addr.Prefix(32)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ww := ps.AddrToDomain[addrPfx]
+	ww := ps.AddrToDomain[addr]
 	if ww.Domain != domain {
 		t.Fatalf("want %s, got %s", domain, ww.Domain)
 	}
@@ -344,7 +340,7 @@ func TestConsensusRestore(t *testing.T) {
 	if psAfter.domainToAddr[domain] != expectedAddr {
 		t.Fatalf("want %s, got %s", expectedAddr, psAfter.domainToAddr[domain])
 	}
-	ww, _ := psAfter.addrToDomain.Lookup(expectedAddr)
+	ww, _ := psAfter.addrToDomain.Load(expectedAddr)
 	if ww.Domain != domain {
 		t.Fatalf("want %s, got %s", domain, ww.Domain)
 	}

@@ -10,10 +10,8 @@ import (
 	"fmt"
 	"log"
 	"net/netip"
-	"sync"
 	"time"
 
-	"github.com/gaissmai/bart"
 	"github.com/hashicorp/raft"
 	"go4.org/netipx"
 	"tailscale.com/syncs"
@@ -65,9 +63,7 @@ func (ipp *ConsensusIPPool) DomainForIP(from tailcfg.NodeID, addr netip.Addr, up
 func (ipp *ConsensusIPPool) retryDomainLookup(from tailcfg.NodeID, addr netip.Addr, n int) (whereWhen, bool) {
 	ps, foundPeerState := ipp.perPeerMap.Load(from)
 	if foundPeerState {
-		ps.mu.Lock()
-		ww, foundDomain := ps.addrToDomain.Lookup(addr)
-		ps.mu.Unlock()
+		ww, foundDomain := ps.addrToDomain.Load(addr)
 		if foundDomain {
 			return ww, true
 		}
@@ -106,9 +102,8 @@ type whereWhen struct {
 }
 
 type consensusPerPeerState struct {
-	mu           sync.Mutex
 	domainToAddr map[string]netip.Addr
-	addrToDomain *bart.Table[whereWhen]
+	addrToDomain *syncs.Map[netip.Addr, whereWhen]
 }
 
 // StopConsensus is part of the IPPool interface. It stops the raft background routines that handle consensus.
@@ -131,7 +126,7 @@ func (ps *consensusPerPeerState) unusedIPV4(ipset *netipx.IPSet, reuseDeadline t
 			continue
 		}
 		for toIP.Compare(ip) != -1 {
-			ww, ok := ps.addrToDomain.Lookup(ip)
+			ww, ok := ps.addrToDomain.Load(ip)
 			if !ok {
 				return ip, false, "", nil
 			}
@@ -208,7 +203,7 @@ func (ipp *ConsensusIPPool) applyMarkLastUsed(from tailcfg.NodeID, addr netip.Ad
 		log.Printf("applyMarkLastUsed: could not find peer state, nodeID: %s", from)
 		return nil
 	}
-	ww, ok := ps.addrToDomain.Lookup(addr)
+	ww, ok := ps.addrToDomain.Load(addr)
 	if !ok {
 		// The peer state didn't have an entry for the IP address (possibly it expired), so there's nothing to mark.
 		return nil
@@ -222,7 +217,7 @@ func (ipp *ConsensusIPPool) applyMarkLastUsed(from tailcfg.NodeID, addr netip.Ad
 		return nil
 	}
 	ww.LastUsed = updatedAt
-	ps.addrToDomain.Insert(netip.PrefixFrom(addr, addr.BitLen()), ww)
+	ps.addrToDomain.Store(addr, ww)
 	return nil
 }
 
@@ -289,13 +284,13 @@ func (ipp *ConsensusIPPool) executeCheckoutAddr(bs []byte) tsconsensus.CommandRe
 // so that's fine).
 func (ipp *ConsensusIPPool) applyCheckoutAddr(nid tailcfg.NodeID, domain string, reuseDeadline, updatedAt time.Time) (netip.Addr, error) {
 	ps, _ := ipp.perPeerMap.LoadOrStore(nid, &consensusPerPeerState{
-		addrToDomain: &bart.Table[whereWhen]{},
+		addrToDomain: &syncs.Map[netip.Addr, whereWhen]{},
 	})
 	if existing, ok := ps.domainToAddr[domain]; ok {
-		ww, ok := ps.addrToDomain.Lookup(existing)
+		ww, ok := ps.addrToDomain.Load(existing)
 		if ok {
 			ww.LastUsed = updatedAt
-			ps.addrToDomain.Insert(netip.PrefixFrom(existing, existing.BitLen()), ww)
+			ps.addrToDomain.Store(existing, ww)
 			return existing, nil
 		}
 		log.Printf("applyCheckoutAddr: data out of sync, allocating new IP")
@@ -308,7 +303,7 @@ func (ipp *ConsensusIPPool) applyCheckoutAddr(nid tailcfg.NodeID, domain string,
 	if wasInUse {
 		delete(ps.domainToAddr, previousDomain)
 	}
-	ps.addrToDomain.Insert(netip.PrefixFrom(addr, addr.BitLen()), whereWhen{Domain: domain, LastUsed: updatedAt})
+	ps.addrToDomain.Store(addr, whereWhen{Domain: domain, LastUsed: updatedAt})
 	return addr, nil
 }
 

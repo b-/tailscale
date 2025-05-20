@@ -7,9 +7,9 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"maps"
 	"net/netip"
 
-	"github.com/gaissmai/bart"
 	"github.com/hashicorp/raft"
 	"go4.org/netipx"
 	"tailscale.com/syncs"
@@ -150,29 +150,21 @@ func (f fsmSnapshot) getData() (*netipx.IPSet, *syncs.Map[tailcfg.NodeID, *conse
 // part of the raft snapshotting, getPersistable will be called during Snapshot
 // and the results used during persist (concurrently with Apply)
 func (ps *consensusPerPeerState) getPersistable() persistablePPS {
-	dtaCopy := map[string]netip.Addr{}
-	for k, v := range ps.domainToAddr {
-		dtaCopy[k] = v
-	}
-	atd := map[netip.Prefix]whereWhen{}
-	for pfx, ww := range ps.addrToDomain.All() {
-		atd[pfx] = ww
-	}
 	return persistablePPS{
-		AddrToDomain: atd,
-		DomainToAddr: dtaCopy,
+		AddrToDomain: maps.Collect(ps.addrToDomain.All()),
+		DomainToAddr: maps.Clone(ps.domainToAddr),
 	}
 }
 
 type persistablePPS struct {
 	DomainToAddr map[string]netip.Addr
-	AddrToDomain map[netip.Prefix]whereWhen
+	AddrToDomain map[netip.Addr]whereWhen
 }
 
 func (p persistablePPS) toPerPeerState() *consensusPerPeerState {
-	atd := &bart.Table[whereWhen]{}
+	atd := &syncs.Map[netip.Addr, whereWhen]{}
 	for k, v := range p.AddrToDomain {
-		atd.Insert(k, v)
+		atd.Store(k, v)
 	}
 	return &consensusPerPeerState{
 		domainToAddr: p.DomainToAddr,
