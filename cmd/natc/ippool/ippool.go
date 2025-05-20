@@ -5,7 +5,6 @@
 package ippool
 
 import (
-	"context"
 	"errors"
 	"log"
 	"math/big"
@@ -17,7 +16,6 @@ import (
 	"go4.org/netipx"
 	"tailscale.com/syncs"
 	"tailscale.com/tailcfg"
-	"tailscale.com/tsnet"
 	"tailscale.com/util/dnsname"
 	"tailscale.com/util/mak"
 )
@@ -34,12 +32,6 @@ type SingleMachineIPPool struct {
 	IPSet      *netipx.IPSet
 }
 
-func (*SingleMachineIPPool) StartConsensus(context.Context, *tsnet.Server, string) error {
-	return nil
-}
-func (*SingleMachineIPPool) StopConsensus(context.Context) error {
-	return nil
-}
 func (ipp *SingleMachineIPPool) DomainForIP(from tailcfg.NodeID, addr netip.Addr, _ time.Time) (string, bool) {
 	ps, ok := ipp.perPeerMap.Load(from)
 	if !ok {
