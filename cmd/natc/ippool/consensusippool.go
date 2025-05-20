@@ -283,9 +283,13 @@ func (ipp *ConsensusIPPool) executeCheckoutAddr(bs []byte) tsconsensus.CommandRe
 // It is not safe for concurrent access (it's only called from raft, which will not call concurrently
 // so that's fine).
 func (ipp *ConsensusIPPool) applyCheckoutAddr(nid tailcfg.NodeID, domain string, reuseDeadline, updatedAt time.Time) (netip.Addr, error) {
-	ps, _ := ipp.perPeerMap.LoadOrStore(nid, &consensusPerPeerState{
-		addrToDomain: &syncs.Map[netip.Addr, whereWhen]{},
-	})
+	ps, ok := ipp.perPeerMap.Load(nid)
+	if !ok {
+		ps = &consensusPerPeerState{
+			addrToDomain: &syncs.Map[netip.Addr, whereWhen]{},
+		}
+		ipp.perPeerMap.Store(nid, ps)
+	}
 	if existing, ok := ps.domainToAddr[domain]; ok {
 		ww, ok := ps.addrToDomain.Load(existing)
 		if ok {
