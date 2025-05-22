@@ -42,8 +42,30 @@ func NewConsensusIPPool(ipSet *netipx.IPSet) *ConsensusIPPool {
 // DomainForIP is part of the IPPool interface. It returns a domain for a given IP address, if we have
 // previously assigned the IP address to a domain for the node that is asking. Otherwise it logs and returns the empty string.
 func (ipp *ConsensusIPPool) DomainForIP(from tailcfg.NodeID, addr netip.Addr, updatedAt time.Time) (string, bool) {
-	ww, ok := ipp.retryDomainLookup(from, addr, 0)
-	if !ok {
+	// Look in local state, to save a consensus round trip; local state may be stale.
+	//
+	// The only time we expect ordering of commands to matter to clients is on first
+	// connection to a domain. In that case it may be that although we don't find the
+	// domain in our local state, it is in fact in the state of the state machine (ie
+	// the client did a DNS lookup, and we responded with an IP and _should_ know that
+	// domain when the TCP connection for that IP arrives.)
+	//
+	// So it's ok to return local state, unless local state doesn't recognize the domain,
+	// in which case we should check the consensus state machine to know for sure.
+	var domain string
+	ww, ok := ipp.domainLookup(from, addr)
+	if ok {
+		domain = ww.Domain
+	} else {
+		d, err := ipp.readDomainForIP(from, addr)
+		if err != nil {
+			log.Printf("error reading domain from consensus: %v", err)
+			return "", false
+		}
+		domain = d
+	}
+	if domain == "" {
+		log.Printf("did not find domain for node: %v, addr: %s", from, addr)
 		return "", false
 	}
 	go func() {
@@ -52,36 +74,21 @@ func (ipp *ConsensusIPPool) DomainForIP(from tailcfg.NodeID, addr netip.Addr, up
 			panic(err)
 		}
 	}()
-	return ww.Domain, true
+	return domain, true
 }
 
-// retryDomainLookup tries to lookup the domain for this IP+node. If it can't find the node or the IP it
-// tries again up to 5 times, with exponential backoff.
-// The raft lib will tell the leader that a log entry has been applied to a quorum of nodes, sometimes before the
-// log entry has been applied to the local state. This means that in our case the traffic on an IP can arrive before
-// we have the domain for which that IP applies stored.
-func (ipp *ConsensusIPPool) retryDomainLookup(from tailcfg.NodeID, addr netip.Addr, n int) (whereWhen, bool) {
-	ps, foundPeerState := ipp.perPeerMap.Load(from)
-	if foundPeerState {
-		ww, foundDomain := ps.addrToDomain.Load(addr)
-		if foundDomain {
-			return ww, true
-		}
-	}
-	if n > 4 {
-		if !foundPeerState {
-			log.Printf("DomainForIP: peer state absent for: %d", from)
-		} else {
-			log.Printf("DomainForIP: peer state doesn't recognize addr: %s", addr)
-		}
+func (ipp *ConsensusIPPool) domainLookup(from tailcfg.NodeID, addr netip.Addr) (whereWhen, bool) {
+	ps, ok := ipp.perPeerMap.Load(from)
+	if !ok {
+		log.Printf("domainLookup: peer state absent for: %d", from)
 		return whereWhen{}, false
 	}
-	timeToWait := 100
-	for i := 0; i < n; i++ {
-		timeToWait *= 2
+	ww, ok := ps.addrToDomain.Load(addr)
+	if !ok {
+		log.Printf("domainLookup: peer state doesn't recognize addr: %s", addr)
+		return whereWhen{}, false
 	}
-	time.Sleep(time.Millisecond * time.Duration(timeToWait))
-	return ipp.retryDomainLookup(from, addr, n+1)
+	return ww, true
 }
 
 // StartConsensus is part of the IPPool interface. It starts the raft background routines that handle consensus.
@@ -169,6 +176,66 @@ func (ipp *ConsensusIPPool) IPForDomain(nid tailcfg.NodeID, domain string) (neti
 	var addr netip.Addr
 	err = json.Unmarshal(result.Result, &addr)
 	return addr, err
+}
+
+type readDomainForIPArgs struct {
+	NodeID tailcfg.NodeID
+	Addr   netip.Addr
+}
+
+// executeReadDomainForIP parses a readDomainForIP log entry and applies it.
+func (ipp *ConsensusIPPool) executeReadDomainForIP(bs []byte) tsconsensus.CommandResult {
+	var args markLastUsedArgs
+	err := json.Unmarshal(bs, &args)
+	if err != nil {
+		return tsconsensus.CommandResult{Err: err}
+	}
+	return ipp.applyReadDomainForIP(args.NodeID, args.Addr)
+}
+
+// applyReadDomainForIP TODO fran
+func (ipp *ConsensusIPPool) applyReadDomainForIP(from tailcfg.NodeID, addr netip.Addr) tsconsensus.CommandResult {
+	domain := func() string {
+		ps, ok := ipp.perPeerMap.Load(from)
+		if !ok {
+			return ""
+		}
+		ww, ok := ps.addrToDomain.Load(addr)
+		if !ok {
+			return ""
+		}
+		return ww.Domain
+	}()
+	resultBs, err := json.Marshal(domain)
+	return tsconsensus.CommandResult{Result: resultBs, Err: err}
+}
+
+// readDomainForIP executes a readDomainForIP command on the leader with raft.
+func (ipp *ConsensusIPPool) readDomainForIP(nid tailcfg.NodeID, addr netip.Addr) (string, error) {
+	args := readDomainForIPArgs{
+		NodeID: nid,
+		Addr:   addr,
+	}
+	bs, err := json.Marshal(args)
+	if err != nil {
+		return "", err
+	}
+	c := tsconsensus.Command{
+		Name: "readDomainForIP",
+		Args: bs,
+	}
+	result, err := ipp.consensus.ExecuteCommand(c)
+	if err != nil {
+		log.Printf("readDomainForIP: raft error executing command: %v", err)
+		return "", err
+	}
+	if result.Err != nil {
+		log.Printf("readDomainForIP: error returned from state machine: %v", err)
+		return "", result.Err
+	}
+	var domain string
+	err = json.Unmarshal(result.Result, &domain)
+	return domain, err
 }
 
 type markLastUsedArgs struct {
@@ -322,6 +389,8 @@ func (ipp *ConsensusIPPool) Apply(l *raft.Log) any {
 		return ipp.executeCheckoutAddr(c.Args)
 	case "markLastUsed":
 		return ipp.executeMarkLastUsed(c.Args)
+	case "readDomainForIP":
+		return ipp.executeReadDomainForIP(c.Args)
 	default:
 		panic(fmt.Sprintf("unrecognized command: %s", c.Name))
 	}

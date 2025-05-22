@@ -111,7 +111,7 @@ func TestConsensusPoolExpiry(t *testing.T) {
 	if aAddr.Compare(firstIP) != 0 {
 		t.Fatalf("expected %s, got %s", firstIP, aAddr)
 	}
-	ww, ok := ipp.retryDomainLookup(from, firstIP, 0)
+	ww, ok := ipp.domainLookup(from, firstIP)
 	if !ok {
 		t.Fatal("expected wherewhen to be found")
 	}
@@ -136,7 +136,7 @@ func TestConsensusPoolExpiry(t *testing.T) {
 	if cAddr.Compare(firstIP) != 0 {
 		t.Fatalf("expected %s, got %s", firstIP, cAddr)
 	}
-	ww, ok = ipp.retryDomainLookup(from, firstIP, 0)
+	ww, ok = ipp.domainLookup(from, firstIP)
 	if !ok {
 		t.Fatal("expected wherewhen to be found")
 	}
@@ -152,7 +152,7 @@ func TestConsensusPoolExpiry(t *testing.T) {
 	if cAddrAgain.Compare(cAddr) != 0 {
 		t.Fatalf("expected cAddrAgain to be cAddr, but they are different. cAddrAgain=%s cAddr=%s", cAddrAgain, cAddr)
 	}
-	ww, ok = ipp.retryDomainLookup(from, firstIP, 0)
+	ww, ok = ipp.domainLookup(from, firstIP)
 	if !ok {
 		t.Fatal("expected wherewhen to be found")
 	}
@@ -177,7 +177,7 @@ func TestConsensusPoolApplyMarkLastUsed(t *testing.T) {
 		t.Fatalf("expected %s, got %s", firstIP, aAddr)
 	}
 	// example.com LastUsed is now time1
-	ww, ok := ipp.retryDomainLookup(from, firstIP, 0)
+	ww, ok := ipp.domainLookup(from, firstIP)
 	if !ok {
 		t.Fatal("expected wherewhen to be found")
 	}
@@ -194,7 +194,7 @@ func TestConsensusPoolApplyMarkLastUsed(t *testing.T) {
 	}
 
 	// example.com LastUsed is now time2
-	ww, ok = ipp.retryDomainLookup(from, firstIP, 0)
+	ww, ok = ipp.domainLookup(from, firstIP)
 	if !ok {
 		t.Fatal("expected wherewhen to be found")
 	}
@@ -229,6 +229,31 @@ func TestConsensusDomainForIP(t *testing.T) {
 	}
 	if !ok {
 		t.Fatalf("expected domain to be found for IP that was handed out for it")
+	}
+}
+
+func TestConsensusReadDomainForIP(t *testing.T) {
+	ipp := makePool(netip.MustParsePrefix("100.64.0.0/16"))
+	from := tailcfg.NodeID(1)
+	domain := "example.com"
+
+	d, err := ipp.readDomainForIP(from, netip.MustParseAddr("100.64.0.1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d != "" {
+		t.Fatalf("expected an empty string if the addr is not found but got %s", d)
+	}
+	a, err := ipp.IPForDomain(from, domain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d2, err := ipp.readDomainForIP(from, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d2 != domain {
+		t.Fatalf("expected %s but got %s", domain, d2)
 	}
 }
 
