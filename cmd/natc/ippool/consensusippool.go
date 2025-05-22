@@ -213,7 +213,7 @@ type readDomainForIPArgs struct {
 
 // executeReadDomainForIP parses a readDomainForIP log entry and applies it.
 func (ipp *ConsensusIPPool) executeReadDomainForIP(bs []byte) tsconsensus.CommandResult {
-	var args markLastUsedArgs
+	var args readDomainForIPArgs
 	err := json.Unmarshal(bs, &args)
 	if err != nil {
 		return tsconsensus.CommandResult{Err: err}
