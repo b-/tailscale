@@ -27,15 +27,17 @@ import (
 // The cluster maintains consistency, reads can be stale and writes can be unavailable if sufficient cluster
 // peers are unavailable.
 type ConsensusIPPool struct {
-	IPSet      *netipx.IPSet
-	perPeerMap *syncs.Map[tailcfg.NodeID, *consensusPerPeerState]
-	consensus  commandExecutor
+	IPSet                 *netipx.IPSet
+	perPeerMap            *syncs.Map[tailcfg.NodeID, *consensusPerPeerState]
+	consensus             commandExecutor
+	unusedAddressLifetime time.Duration
 }
 
 func NewConsensusIPPool(ipSet *netipx.IPSet) *ConsensusIPPool {
 	return &ConsensusIPPool{
-		IPSet:      ipSet,
-		perPeerMap: &syncs.Map[tailcfg.NodeID, *consensusPerPeerState]{},
+		unusedAddressLifetime: 48 * time.Hour, // TODO (fran) is this appropriate? should it be configurable?
+		IPSet:                 ipSet,
+		perPeerMap:            &syncs.Map[tailcfg.NodeID, *consensusPerPeerState]{},
 	}
 }
 
@@ -146,14 +148,40 @@ func (ps *consensusPerPeerState) unusedIPV4(ipset *netipx.IPSet, reuseDeadline t
 	return netip.Addr{}, false, "", errors.New("ip pool exhausted")
 }
 
+// isCloseToExpiry returns true if the lastUsed and now times are more than
+// half the lifetime apart
+func isCloseToExpiry(lastUsed, now time.Time, lifetime time.Duration) bool {
+	return now.Sub(lastUsed).Abs() > (lifetime / 2)
+}
+
 // IPForDomain is part of the IPPool interface. It returns an IP address for the given domain for the given node
 // allocating an IP address from the pool if we haven't already.
 func (ipp *ConsensusIPPool) IPForDomain(nid tailcfg.NodeID, domain string) (netip.Addr, error) {
 	now := time.Now()
+	// Check local state; local state may be stale. If we have an IP for this domain, and we are not
+	// close to the expiry time for the domain, it's safe to return what we have.
+	ps, psFound := ipp.perPeerMap.Load(nid)
+	if psFound {
+		if addr, addrFound := ps.domainToAddr[domain]; addrFound {
+			if ww, wwFound := ps.addrToDomain.Load(addr); wwFound {
+				if !isCloseToExpiry(ww.LastUsed, now, ipp.unusedAddressLifetime) {
+					go func() {
+						err := ipp.markLastUsed(nid, addr, ww.Domain, now)
+						if err != nil {
+							panic(err)
+						}
+					}()
+					return addr, nil
+				}
+			}
+		}
+	}
+
+	// go via consensus
 	args := checkoutAddrArgs{
 		NodeID:        nid,
 		Domain:        domain,
-		ReuseDeadline: now.Add(-48 * time.Hour), // TODO (fran) is this appropriate? should it be configurable?
+		ReuseDeadline: now.Add(-1 * ipp.unusedAddressLifetime),
 		UpdatedAt:     now,
 	}
 	bs, err := json.Marshal(args)

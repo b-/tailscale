@@ -370,3 +370,14 @@ func TestConsensusRestore(t *testing.T) {
 		t.Fatalf("want %s, got %s", domain, ww.Domain)
 	}
 }
+
+func TestConsensusIsCloseToExpiry(t *testing.T) {
+	a := time.Now()
+	b := a.Add(5 * time.Second)
+	if !isCloseToExpiry(a, b, 8*time.Second) {
+		t.Fatal("times are not within half the lifetime, expected true")
+	}
+	if isCloseToExpiry(a, b, 12*time.Second) {
+		t.Fatal("times are within half the lifetime, expected false")
+	}
+}
