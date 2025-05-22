@@ -70,13 +70,21 @@ func (ipp *ConsensusIPPool) DomainForIP(from tailcfg.NodeID, addr netip.Addr, up
 		log.Printf("did not find domain for node: %v, addr: %s", from, addr)
 		return "", false
 	}
+	ipp.fireAndForgetMarkLastUsed(from, addr, ww, updatedAt)
+	return domain, true
+}
+
+func (ipp *ConsensusIPPool) fireAndForgetMarkLastUsed(from tailcfg.NodeID, addr netip.Addr, ww whereWhen, updatedAt time.Time) {
+	window := 5 * time.Minute
+	if updatedAt.Sub(ww.LastUsed).Abs() < window {
+		return
+	}
 	go func() {
 		err := ipp.markLastUsed(from, addr, ww.Domain, updatedAt)
 		if err != nil {
 			panic(err)
 		}
 	}()
-	return domain, true
 }
 
 func (ipp *ConsensusIPPool) domainLookup(from tailcfg.NodeID, addr netip.Addr) (whereWhen, bool) {
@@ -165,12 +173,7 @@ func (ipp *ConsensusIPPool) IPForDomain(nid tailcfg.NodeID, domain string) (neti
 		if addr, addrFound := ps.domainToAddr[domain]; addrFound {
 			if ww, wwFound := ps.addrToDomain.Load(addr); wwFound {
 				if !isCloseToExpiry(ww.LastUsed, now, ipp.unusedAddressLifetime) {
-					go func() {
-						err := ipp.markLastUsed(nid, addr, ww.Domain, now)
-						if err != nil {
-							panic(err)
-						}
-					}()
+					ipp.fireAndForgetMarkLastUsed(nid, addr, ww, now)
 					return addr, nil
 				}
 			}
