@@ -41,8 +41,56 @@ func NewConsensusIPPool(ipSet *netipx.IPSet) *ConsensusIPPool {
 	}
 }
 
-// DomainForIP is part of the IPPool interface. It returns a domain for a given IP address, if we have
-// previously assigned the IP address to a domain for the node that is asking. Otherwise it logs and returns the empty string.
+// IPForDomain looks up or creates an IP address allocation for the tailcfg.NodeID and domain pair.
+// If no address association is found, one is allocated from the range of free addresses for this tailcfg.NodeID.
+// If no more address are available, an error is returned.
+func (ipp *ConsensusIPPool) IPForDomain(nid tailcfg.NodeID, domain string) (netip.Addr, error) {
+	now := time.Now()
+	// Check local state; local state may be stale. If we have an IP for this domain, and we are not
+	// close to the expiry time for the domain, it's safe to return what we have.
+	ps, psFound := ipp.perPeerMap.Load(nid)
+	if psFound {
+		if addr, addrFound := ps.domainToAddr[domain]; addrFound {
+			if ww, wwFound := ps.addrToDomain.Load(addr); wwFound {
+				if !isCloseToExpiry(ww.LastUsed, now, ipp.unusedAddressLifetime) {
+					ipp.fireAndForgetMarkLastUsed(nid, addr, ww, now)
+					return addr, nil
+				}
+			}
+		}
+	}
+
+	// go via consensus
+	args := checkoutAddrArgs{
+		NodeID:        nid,
+		Domain:        domain,
+		ReuseDeadline: now.Add(-1 * ipp.unusedAddressLifetime),
+		UpdatedAt:     now,
+	}
+	bs, err := json.Marshal(args)
+	if err != nil {
+		return netip.Addr{}, err
+	}
+	c := tsconsensus.Command{
+		Name: "checkoutAddr",
+		Args: bs,
+	}
+	result, err := ipp.consensus.ExecuteCommand(c)
+	if err != nil {
+		log.Printf("IPForDomain: raft error executing command: %v", err)
+		return netip.Addr{}, err
+	}
+	if result.Err != nil {
+		log.Printf("IPForDomain: error returned from state machine: %v", err)
+		return netip.Addr{}, result.Err
+	}
+	var addr netip.Addr
+	err = json.Unmarshal(result.Result, &addr)
+	return addr, err
+}
+
+// DomainForIP looks up the domain associated with a tailcfg.NodeID and netip.Addr pair.
+// If there is no association, the result is empty and ok is false.
 func (ipp *ConsensusIPPool) DomainForIP(from tailcfg.NodeID, addr netip.Addr, updatedAt time.Time) (string, bool) {
 	// Look in local state, to save a consensus round trip; local state may be stale.
 	//
@@ -160,53 +208,6 @@ func (ps *consensusPerPeerState) unusedIPV4(ipset *netipx.IPSet, reuseDeadline t
 // half the lifetime apart
 func isCloseToExpiry(lastUsed, now time.Time, lifetime time.Duration) bool {
 	return now.Sub(lastUsed).Abs() > (lifetime / 2)
-}
-
-// IPForDomain is part of the IPPool interface. It returns an IP address for the given domain for the given node
-// allocating an IP address from the pool if we haven't already.
-func (ipp *ConsensusIPPool) IPForDomain(nid tailcfg.NodeID, domain string) (netip.Addr, error) {
-	now := time.Now()
-	// Check local state; local state may be stale. If we have an IP for this domain, and we are not
-	// close to the expiry time for the domain, it's safe to return what we have.
-	ps, psFound := ipp.perPeerMap.Load(nid)
-	if psFound {
-		if addr, addrFound := ps.domainToAddr[domain]; addrFound {
-			if ww, wwFound := ps.addrToDomain.Load(addr); wwFound {
-				if !isCloseToExpiry(ww.LastUsed, now, ipp.unusedAddressLifetime) {
-					ipp.fireAndForgetMarkLastUsed(nid, addr, ww, now)
-					return addr, nil
-				}
-			}
-		}
-	}
-
-	// go via consensus
-	args := checkoutAddrArgs{
-		NodeID:        nid,
-		Domain:        domain,
-		ReuseDeadline: now.Add(-1 * ipp.unusedAddressLifetime),
-		UpdatedAt:     now,
-	}
-	bs, err := json.Marshal(args)
-	if err != nil {
-		return netip.Addr{}, err
-	}
-	c := tsconsensus.Command{
-		Name: "checkoutAddr",
-		Args: bs,
-	}
-	result, err := ipp.consensus.ExecuteCommand(c)
-	if err != nil {
-		log.Printf("IPForDomain: raft error executing command: %v", err)
-		return netip.Addr{}, err
-	}
-	if result.Err != nil {
-		log.Printf("IPForDomain: error returned from state machine: %v", err)
-		return netip.Addr{}, result.Err
-	}
-	var addr netip.Addr
-	err = json.Unmarshal(result.Result, &addr)
-	return addr, err
 }
 
 type readDomainForIPArgs struct {
