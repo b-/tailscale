@@ -72,8 +72,6 @@ func (mipr *persistableIPRange) toIPRange() netipx.IPRange {
 //   - will not be called concurrently with any other command
 //   - the FSM must discard all previous state before restoring
 func (ipp *ConsensusIPPool) Restore(rc io.ReadCloser) error {
-	//IPSet      *netipx.IPSet
-	//perPeerMap syncs.Map[tailcfg.NodeID, *consensusPerPeerState]
 	var snap fsmSnapshot
 	if err := json.NewDecoder(rc).Decode(&snap); err != nil {
 		return err
@@ -106,9 +104,10 @@ func (f fsmSnapshot) Persist(sink raft.SnapshotSink) error {
 func (f fsmSnapshot) Release() {}
 
 // getPersistable returns an object that:
-// * contains all the data in ConsensusIPPool
-// * doesn't share any pointers with it
-// * can be marshalled to JSON
+//   - contains all the data in ConsensusIPPool
+//   - doesn't share any pointers with it
+//   - can be marshalled to JSON
+//
 // part of the raft snapshotting, getPersistable will be called during Snapshot
 // and the results used during persist (concurrently with Apply)
 func (ipp *ConsensusIPPool) getPersistable() fsmSnapshot {
@@ -135,9 +134,10 @@ func (f fsmSnapshot) getData() (*netipx.IPSet, *syncs.Map[tailcfg.NodeID, *conse
 }
 
 // getPersistable returns an object that:
-// * contains all the data in consensusPerPeerState
-// * doesn't share any pointers with it
-// * can be marshalled to JSON
+//   - contains all the data in consensusPerPeerState
+//   - doesn't share any pointers with it
+//   - can be marshalled to JSON
+//
 // part of the raft snapshotting, getPersistable will be called during Snapshot
 // and the results used during persist (concurrently with Apply)
 func (ps *consensusPerPeerState) getPersistable() persistablePPS {
