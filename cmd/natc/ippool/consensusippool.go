@@ -130,7 +130,7 @@ func (ipp *ConsensusIPPool) fireAndForgetMarkLastUsed(from tailcfg.NodeID, addr 
 	go func() {
 		err := ipp.markLastUsed(from, addr, ww.Domain, updatedAt)
 		if err != nil {
-			panic(err)
+			log.Printf("error marking last used: %v", err)
 		}
 	}()
 }
